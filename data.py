@@ -21,6 +21,7 @@ from nltk.parse import DependencyGraph
 
 from parser import PartialParse
 from parser import get_sentence_from_graph
+from gensim.models import KeyedVectors
 
 class UniversalDependencyCorpusReader(SyntaxCorpusReader):
     '''Update to DependencyCorpusReader to account for 10-field conllu fmt'''
@@ -47,7 +48,7 @@ class UniversalDependencyCorpusReader(SyntaxCorpusReader):
         return [fields[1] for fields in s]
 
     def _tag(self, s, _):
-        return [(fields[1], fields[3]) for fields in s]
+        return [(fields[1], fields[4]) for fields in s]
 
     def _parse(self, s):
         # dependencygraph wants it all back together...
@@ -59,8 +60,9 @@ path.append(abspath(dirname(__file__)))
 ud_english = LazyCorpusLoader(
     'ud_english', UniversalDependencyCorpusReader, r'.*\.conll')
 
-mystery = LazyCorpusLoader(
-    'mystery', UniversalDependencyCorpusReader, r'.*\.conll')
+vtb = LazyCorpusLoader(
+    'VnDT', UniversalDependencyCorpusReader, r'.*\.conll'
+)
 
 class Transducer(object):
     """Provides generator methods for converting between data types
@@ -517,7 +519,7 @@ def score_arcs(actuals, expecteds, las=True):
     return ((accumL / max(tokens, 1)) if las else None, accum / max(tokens, 1))
 
 def load_and_preprocess_data(
-        data_set=mystery, word_embedding_path='word2vec.pkl.gz', las=True,
+        data_set=vtb, word_embedding_path='baomoi.window2.vn.model.bin', las=True,
         max_batch_size=2048, transition_cache=None, seed=1234):
     '''Get train/test data
 
@@ -538,13 +540,23 @@ def load_and_preprocess_data(
     if word_embedding_path.endswith('.gz'):
         with gz_open(word_embedding_path, 'rb') as file_obj:
             word_list, word_embeddings = load(file_obj)
-    else:
+            print(word_list, word_embeddings)
+    elif word_embedding_path.endswith('.pkl'):
         with open(word_embedding_path, 'rb') as file_obj:
             word_list, word_embeddings = load(file_obj)
+    else: 
+        keyed_vectors = KeyedVectors.load_word2vec_format(word_embedding_path, binary=True)
+        word_list = keyed_vectors.index_to_key 
+        word_embeddings = np.array([keyed_vectors.get_vector(word) for word in word_list])
+        print(word_embeddings.shape)
+    # print(word_embeddings.dtype, np.max(word_embeddings), np.min(word_embeddings))
+    # print(word_embeddings.shape)
+    # exit(0)
+    word_embeddings = np.vstack((np.zeros((1, 300), dtype=np.float32), word_embeddings))
     # add null embedding (we'll initialize later)
     word_embeddings = np.append(
         word_embeddings,
-        np.empty((1, word_embeddings.shape[1]), dtype=np.float32),
+        np.zeros((2, word_embeddings.shape[1]), dtype=np.float32),
         axis=0
     )
     print('there are {} word embeddings.'.format(word_embeddings.shape[0]))
@@ -578,7 +590,7 @@ def load_and_preprocess_data(
         transition_cache=transition_cache, seed=seed,
     )
     # use training's rng to initialize null embedding
-    word_embeddings[-1] = training_data.rng.uniform(-.01, .01, 50)
+    word_embeddings[-1] = training_data.rng.uniform(-.01, .01, 300)
     print('there are {} samples.'.format(len(training_data)))
     print('Getting dev data...', end='')
     stdout.flush()
